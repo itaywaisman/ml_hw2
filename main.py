@@ -1,121 +1,57 @@
-import pandas as pd # data analysis and manipulation tool
-import numpy as np # Numerical computing tools
-import seaborn as sns # visualization library
-import matplotlib.pyplot as plt # another visualization library
-import warnings
-
-class OutlierClipper:
-    def __init__(self):
-        self._feature_map = {}
-
-    def fit(self, data):
-        features = list(data.columns)
-        for feature in features:
-            f_q1 = data[feature].quantile(0.25)
-            f_q3 = data[feature].quantile(0.75)
-            f_iqr = f_q3 - f_q1
-            self._feature_map[feature] = (f_q1 - (1.5 * f_iqr), f_q3 + (1.5 * f_iqr))
-        return self
-
-    def transform(self, data):
-        data_copy = data.copy()
-        for feature in self._feature_map.keys():
-            data_copy[feature] = data_copy[feature].clip(lower=self._feature_map[feature][0],
-                                                         upper=self._feature_map[feature][1])
-        return data_copy
-
-    def fit_transform(self, data):
-        self.fit(data)
-        return self.transform(data)
-
-warnings.filterwarnings('ignore')
-
-file = 'virus_hw2.csv'
-
-label_categories = [
-    'not_detected_Spreader_NotatRisk',
-    'not_detected_NotSpreader_atRisk',
-    'not_detected_NotSpreader_NotatRisk',
-    'not_detected_Spreader_atRisk',
-    'cold_NotSpreader_NotatRisk',
-    'cold_Spreader_NotatRisk',
-    'cold_Spreader_atRisk',
-    'cold_NotSpreader_atRisk',
-    'flue_NotSpreader_NotatRisk',
-    'flue_NotSpreader_atRisk',
-    'flue_Spreader_NotatRisk',
-    'covid_NotSpreader_atRisk',
-    'covid_Spreader_NotatRisk',
-    'flue_Spreader_atRisk',
-    'covid_NotSpreader_NotatRisk',
-    'covid_Spreader_atRisk',
-    'cmv_NotSpreader_NotatRisk',
-    'cmv_Spreader_atRisk',
-    'cmv_NotSpreader_atRisk',
-    'cmv_Spreader_NotatRisk',
-    'measles_Spreader_NotatRisk',
-    'measles_NotSpreader_NotatRisk',
-    'measles_NotSpreader_atRisk',
-    'measles_Spreader_atRisk',
-]
-
-parse_dates = ['DateOfPCRTest']
-df = pd.read_csv(file, parse_dates=parse_dates)
-
-convert_dict = {
-    'Address': str,
-    'AgeGroup': pd.CategoricalDtype(categories=range(1,9), ordered=True),
-    'BloodType': pd.CategoricalDtype(categories=['AB-', 'A+', 'AB+', 'A-', 'B-', 'O-', 'B+', 'O+']),
-    'Job': str,
-    'Sex': pd.CategoricalDtype(categories=['F', 'M']),
-    'SyndromeClass': pd.CategoricalDtype(categories=range(1,5)),
-}
-
-df = df.astype(convert_dict)
-
-long_lat_df = df['CurrentLocation'].str.strip('(Decimal').str.split(', ', expand=True).rename(columns={0:'Lat', 1:'Long'})
-df['CurrentLocation_Lat'] = long_lat_df['Lat'].str.strip("')")
-df['CurrentLocation_Long'] = long_lat_df['Long'].str.strip("Decimal('").str.rstrip("'))")
-
-convert_dict = {
-    'CurrentLocation_Lat': float,
-    'CurrentLocation_Long': float,
-}
-
-df = df.astype(convert_dict)
+from globals import bad_features, continous_features, pre_final_list, pcrs, others
+from transformations import split_data, features_data_types_pipeline
+from preprocess import Imputer, OutlierClipper, Normalizer
+from feature_selection import select_features_filter, select_features_wrapper
+from visualize import display_correlation_matrix, save_scatter_plots, plot_df_scatter
+from sklearn.pipeline import Pipeline
 
 
-splitted_df = df['SelfDeclarationOfIllnessForm'].str.split(';', expand=True)
-values = splitted_df.values.flatten()
-unique_values = pd.unique(values).tolist()
-stripped_unique_values = [str(val).strip(' ') for val in unique_values]
+def load_and_prepare_data():
+    # Load Dataset
+    df = pd.read_csv('virus_hw2.csv')
+    df.drop(labels=bad_features, axis=1, inplace=True)
+    X_train, X_val, X_test, y_train, y_val, y_test = split_data(df)
 
-# Split by ; to create a list for each row
-df['SelfDeclarationOfIllnessForm_list'] = df['SelfDeclarationOfIllnessForm'].str.split(';')
+    # Prepare Dataset
+    data_preperation_pipelines = Pipeline([
+        ('feature_types', features_data_types_pipeline),
+        ('feature_imputation', Imputer()),
+        ('outlier_clipping', OutlierClipper(features=continous_features)),
+        ('normalization', Normalizer())
+    ])
+    data_preperation_pipelines.fit(X_train, y_train)
+    label_transformer.fit(y_train)
+    X_train_prepared, y_train_prepared = data_preperation_pipelines.transform(X_train), label_transformer.transform(
+        y_train)
+    X_validation_prepared, y_validation_prepared = data_preperation_pipelines.transform(
+        X_val), label_transformer.transform(y_val)
+    X_test_prepared, y_test_prepared = data_preperation_pipelines.transform(X_test), label_transformer.transform(y_test)
 
-# Replace NAN values with empty list
-isna = df['SelfDeclarationOfIllnessForm_list'].isna()
-df.loc[isna, 'SelfDeclarationOfIllnessForm_list'] = pd.Series([[]] * isna.sum()).values
+    return X_train_prepared, X_validation_prepared, X_test_prepared,\
+           y_train_prepared, y_validation_prepared, y_test_prepared
 
-# strip whitespaces
-df['SelfDeclarationOfIllnessForm_list'] = [[str(val).strip() for val in list(symptom_list)] for symptom_list in df['SelfDeclarationOfIllnessForm_list'].values]
 
-# Create columns
-for column_name in stripped_unique_values:
-    df[column_name] = pd.Series([1 if column_name in row else 0 for row in df['SelfDeclarationOfIllnessForm_list']])
+def select_features(X_train_prepared, y_train_prepared):
+    sff = select_features_filter(X_train_prepared, y_train_prepared)
+    with open('filter_features.txt', 'w') as f:
+        f.write(',\n'.join(X_train_prepared.columns[sff.support_]))
+    sfs = select_features_wrapper(X_train_prepared, y_train_prepared)
+    with open('wrapper_features.txt', 'w') as f:
+        f.write(',\n'.join(sfs.k_feature_names_))
 
-# Rename no symptoms column
-df.rename(columns={'nan': 'No_Symptoms'}, inplace=True)
+    sfs = select_features_wrapper(X_train_prepared[pre_final_list], y_train_prepared, forward=False, k_features=15)
 
-# Drop irrelevant features
-df.drop(labels=['SelfDeclarationOfIllnessForm','SelfDeclarationOfIllnessForm_list'], axis=1, inplace=True)
 
-f = plt.figure(figsize=(80, 80))
-plt.matshow(df.corr(), fignum=f.number)
-plt.xticks(range(df.shape[1]), df.columns, fontsize=14, rotation=90)
-plt.yticks(range(df.shape[1]), df.columns, fontsize=14)
-cb = plt.colorbar()
-cb.ax.tick_params(labelsize=14)
-plt.title('Correlation Matrix', fontsize=16)
-plt.show()
-a = 0
+def print_graphs(X_train_prepared, y_train_prepared):
+    display_correlation_matrix(X_train_prepared, y_train_prepared)
+    display_correlation_matrix(X_train_prepared[list(pre_final_list)], y_train_prepared)
+    plot_df_scatter(X_train_prepared[pcrs], 15)
+    plot_df_scatter(X_train_prepared[others], 15)
+    save_scatter_plots()
+
+
+if __name__ == '__main__':
+    X_train_prepared, X_validation_prepared, X_test_prepared,\
+    y_train_prepared, y_validation_prepared, y_test_prepared = load_and_prepare_data()
+    #select_features(X_train_prepared, y_train_prepared)
+    #print_graphs(X_train_prepared, y_train_prepared)

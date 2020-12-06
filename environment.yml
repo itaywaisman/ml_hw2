@@ -1,0 +1,24 @@
+name: ml-hw2
+channels:
+  - defaults
+  - conda-forge
+dependencies:
+  - cmake # for compiling atari-py
+  - cython
+  - graphviz
+  - ipython
+  - jupyter
+  - jupyterlab
+  - matplotlib
+  - nodejs
+  - numpy
+  - numba
+  - pandas
+  - python-graphviz # for graphviz on Windows
+  - python=3.8.6
+  - seaborn
+  - skrebate
+  - scikit-learn
+  - scipy
+  - pip
+
